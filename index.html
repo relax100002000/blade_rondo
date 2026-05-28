@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Blade Rondo P2P · 劍之輪舞曲</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Blade Rondo P2P</h1>
+    <span class="sub">劍之輪舞曲 · 純前端 MQTT WebSocket 對戰</span>
+    <span id="connState" class="conn">未連線</span>
+  </header>
+
+  <section id="lobby" class="screen">
+    <div class="card-form">
+      <h2>進入對戰</h2>
+      <label>顯示名稱 <input id="lobbyName" maxlength="10" placeholder="玩家名稱"></label>
+      <div class="btn-row">
+        <button id="btnCreate">建立房間（成為主機）</button>
+        <span class="sep">或</span>
+        <label>房間代碼 <input id="lobbyRoom" maxlength="4" placeholder="ABCD" style="text-transform:uppercase"></label>
+        <button id="btnJoin">加入</button>
+      </div>
+      <p class="hint">
+        本程式透過 <code>wss://broker.emqx.io:8084/mqtt</code> 公開 MQTT broker 中繼訊息，<br>
+        雙方輸入同一個 4 碼房號即可對戰。<b>請務必保持瀏覽器分頁開啟</b>，關閉等同斷線。<br>
+        ⚠ 此 broker 為公開測試用，不建議傳送敏感資訊。
+      </p>
+    </div>
+  </section>
+
+  <section id="deckSelect" class="screen hidden">
+    <div class="topbar">
+      <h2>選擇你的 7 張牌</h2>
+      <div>已選 <span id="selCount">0</span> / 7</div>
+      <div class="filter-row">
+        <button data-type="all"     class="ftype active">全部</button>
+        <button data-type="attack"  class="ftype">物理</button>
+        <button data-type="magic"   class="ftype">魔法</button>
+        <button data-type="aid"     class="ftype">輔助</button>
+        <button data-type="stone"   class="ftype">反應</button>
+        <button data-type="special" class="ftype">特殊</button>
+      </div>
+      <button id="btnSubmitDeck" disabled>確認牌組</button>
+      <button id="btnRandomDeck">隨機 7 張</button>
+    </div>
+    <div id="cardPool" class="card-pool"></div>
+    <aside class="selected-panel">
+      <h3>已選</h3>
+      <div id="selectedList"></div>
+      <p class="hint" id="opponentReady"></p>
+    </aside>
+  </section>
+
+  <section id="game" class="screen hidden">
+    <div class="battlefield">
+      <div class="player opp" id="oppPanel">
+        <div class="nameplate">
+          <span class="pname" id="oppName">對手</span>
+          <span class="badge" id="oppFirst" style="display:none">先手</span>
+        </div>
+        <div class="stats">
+          <div class="stat hp"><span>❤</span><span id="oppHp">8</span></div>
+          <div class="stat volt"><span>⚡</span><span id="oppVolt">2</span></div>
+          <div class="stat atk"><span>⚔</span><span id="oppAtk">2</span></div>
+          <div class="stat def"><span>🛡</span><span id="oppDef">2</span></div>
+        </div>
+        <div class="status-row" id="oppStatus"></div>
+        <div class="hand opp-hand" id="oppHand"></div>
+        <div class="used-area" id="oppUsed"></div>
+      </div>
+
+      <div class="center">
+        <div class="day-night" id="dayNight">☀ 日</div>
+        <div class="turn-info" id="turnInfo">等待開始…</div>
+        <div id="pendingPanel" class="pending hidden">
+          <div id="pendingText"></div>
+          <div id="reactArea"></div>
+        </div>
+      </div>
+
+      <div class="player me" id="mePanel">
+        <div class="used-area" id="meUsed"></div>
+        <div class="hand me-hand" id="meHand"></div>
+        <div class="status-row" id="meStatus"></div>
+        <div class="stats">
+          <div class="stat hp"><span>❤</span><span id="meHp">8</span></div>
+          <div class="stat volt"><span>⚡</span><span id="meVolt">2</span></div>
+          <div class="stat atk"><span>⚔</span><span id="meAtk">2</span></div>
+          <div class="stat def"><span>🛡</span><span id="meDef">2</span></div>
+        </div>
+        <div class="nameplate">
+          <span class="pname" id="meName">我</span>
+          <span class="badge" id="meFirst" style="display:none">先手</span>
+          <button id="btnEndTurn">結束回合</button>
+        </div>
+      </div>
+    </div>
+
+    <aside class="logbox">
+      <h3>戰況紀錄</h3>
+      <div id="logList"></div>
+      <div class="chat">
+        <input id="chatInput" placeholder="輸入訊息..." maxlength="200">
+        <button id="btnChat">送出</button>
+      </div>
+    </aside>
+
+    <div id="gameOver" class="overlay hidden">
+      <div class="overlay-box">
+        <h2 id="goText"></h2>
+        <button id="btnRematch">再戰</button>
+      </div>
+    </div>
+
+    <div id="choiceModal" class="overlay hidden">
+      <div class="overlay-box">
+        <h3 id="choiceTitle"></h3>
+        <div id="choiceOptions" class="choice-row"></div>
+      </div>
+    </div>
+  </section>
+
+  <div id="cardTooltip" class="tooltip hidden"></div>
+
+  <!-- mqtt.js (~70 KB minified) — connects to public MQTT brokers over WebSocket -->
+  <script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
+  <script src="cards.js"></script>
+  <script src="game.js"></script>
+  <script src="net.js"></script>
+  <script src="client.js"></script>
+</body>
+</html>
