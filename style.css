@@ -134,3 +134,28 @@ input { background:#0a0e18; color:var(--text); border:1px solid #3a4567; padding
   #game { grid-template-columns: 1fr; height: auto; }
   #deckSelect { grid-template-areas: "top" "pool" "side"; grid-template-columns: 1fr; }
 }
+
+/* Share panel & toast */
+.lobby-info { margin-top: 14px; padding: 12px 14px; background: #122036; border:1px solid #2c4a78; border-radius:8px; }
+.lobby-info .row { display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap; }
+.lobby-info b { color: var(--accent); font-size: 18px; letter-spacing: 2px; }
+.lobby-info code { background:#0a0e18; padding: 4px 8px; border-radius:4px; font-size:11px; color:#9ec0ff; flex:1; min-width: 0; overflow-x:auto; white-space: nowrap; }
+.toast { position:fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--accent); color:#0a0e18; padding: 8px 16px; border-radius: 6px; font-weight:bold; z-index:1000; box-shadow: 0 4px 12px rgba(0,0,0,.4); animation: fadeIn .2s; }
+@keyframes fadeIn { from {opacity:0; transform:translate(-50%, 10px);} to {opacity:1; transform:translate(-50%, 0);} }
+
+/* New: breath-row & stone tag in hand */
+.breath-row { display:flex; gap:6px; flex-wrap:wrap; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px dashed #2a3553; }
+.hand-row { display:flex; gap:6px; flex-wrap:wrap; }
+.breath-card { min-width: 110px !important; max-width: 130px !important; opacity: 0.92; }
+.breath-card.used { opacity: 0.35; filter: grayscale(50%); }
+.stone-card { box-shadow: 0 0 0 1px #c089ff inset; }
+.stone-card::after { content: '蓋置'; position: absolute; bottom: 4px; right: 4px; font-size: 10px; background: #c089ff; color: #0a0e18; padding: 0 4px; border-radius: 3px; }
+.sub-chip { background: #2a5a2a; color: #d0ffd0; padding: 2px 8px; border-radius: 4px; margin-right: 4px; font-size: 11px; }
+.coin-chip { background: #5a4a1a; color: #ffd86b; padding: 2px 8px; border-radius: 4px; margin-right: 6px; font-size: 11px; font-weight: bold; }
+.attach-燐光 { background: #4a3a1a; color: #ffe66b; }
+.attach-暗鴉 { background: #1a1a2a; color: #ccccff; }
+.attach-外套 { background: #2a4a3a; color: #c8ffb8; }
+.attach-水蜜 { background: #4a2a3a; color: #ffb8d8; }
+.attach-毒  { background: #3a4a1a; color: #d8ff80; }
+.frozen-chip { background: #1a4a6a; color: #b8e8ff; padding: 2px 8px; border-radius: 4px; margin-right: 4px; font-size: 11px; border: 1px solid #5acfff; }
+.frozen-chip[style*="cursor:pointer"]:hover { background: #2a6a9a; }

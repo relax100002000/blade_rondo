@@ -3,23 +3,47 @@
 // Guest: sends actions via Net, renders the state host sends back.
 (() => {
   const $ = (id) => document.getElementById(id);
-  let game = null;          // host's authoritative Game state
-  let viewState = null;     // last rendered public-view state (both sides)
-  let myIdx = -1;           // 0 = host, 1 = guest
+  let game = null;
+  let viewState = null;
+  let myIdx = -1;
   let myName = 'P';
   let isHost = false;
   let roomCode = '';
   let deckPick = new Set();
   let activeFilter = 'all';
-  let lastBroadcast = '';   // de-dup state hashes
+  let lastBroadcast = '';
 
   // ============ Networking ============
   function setStatus(text, cls = '') {
     const el = $('connState'); el.textContent = text; el.className = 'conn ' + cls;
   }
 
+  function showToast(text) {
+    const t = $('toast'); if (!t) return;
+    t.textContent = text;
+    t.classList.remove('hidden');
+    clearTimeout(showToast._tm);
+    showToast._tm = setTimeout(() => t.classList.add('hidden'), 1600);
+  }
+  async function copyToClipboard(text) {
+    try { await navigator.clipboard.writeText(text); showToast('已複製'); }
+    catch (e) {
+      const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); showToast('已複製'); } catch {} ta.remove();
+    }
+  }
+  function inviteUrl(code) {
+    const u = new URL(location.href); u.search = '?room=' + encodeURIComponent(code); u.hash = ''; return u.toString();
+  }
+  function updateLobbyInfo(status) {
+    const info = $('lobbyInfo'); if (!info) return;
+    info.classList.remove('hidden');
+    $('liRoom').textContent = roomCode;
+    $('liUrl').textContent  = inviteUrl(roomCode);
+    if (status) $('liStatus').textContent = status;
+  }
+
   function makeCode() {
-    // 4 alphanumeric uppercase — short room code
     const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
     let s = ''; for (let i = 0; i < 4; i++) s += chars[Math.floor(Math.random()*chars.length)];
     return s;
@@ -34,9 +58,10 @@
     Net.connect(roomCode, 'host', null, {
       onConnect: () => {
         setStatus(`已連線 · 房號 ${roomCode}（等待對手加入）`, 'ok');
+        updateLobbyInfo('等待對手加入… 把連結傳給對手！');
         broadcast();
-        // Tell anyone subscribing that host exists
         Net.send({ type: 'host_announce', hostName: myName });
+        try { history.replaceState(null, '', inviteUrl(roomCode)); } catch {}
       },
       onMessage: hostOnMsg,
       onError: (e) => setStatus('錯誤：' + e, 'err'),
@@ -51,7 +76,6 @@
     Net.connect(roomCode, 'guest', null, {
       onConnect: () => {
         setStatus(`已連線 · 房號 ${roomCode}（送出加入請求…）`, 'ok');
-        // Repeatedly send guest_hello until we get a state back (host may not be ready yet)
         let tries = 0;
         const id = setInterval(() => {
           if (viewState) { clearInterval(id); return; }
@@ -66,13 +90,12 @@
     });
   }
 
-  // ----- Host receives -----
   function hostOnMsg(msg) {
     if (msg.type === 'guest_hello') {
-      // Only add if no second player yet
       if (game.players.length < 2) {
         Game.addPlayer(game, msg.name || '對手');
         Game.log(game, `${msg.name || '對手'} 已連線。`);
+        updateLobbyInfo(`對手 ${msg.name || ''} 已加入！`);
       }
       broadcast();
       return;
@@ -84,41 +107,31 @@
       else if (a.kind === 'react')      Game.reactStone(game, 1, a.cardId);
       else if (a.kind === 'pass_react') Game.passReaction(game, 1);
       else if (a.kind === 'end_turn')   Game.endTurn(game, 1);
+      else if (a.kind === 'activate_frozen') Game.activateFrozen(game, 1, a.cardId, a.choice||{});
+      else if (a.kind === 'respond_choice') Game.respondChoice(game, 1, a.selection || []);
       else if (a.kind === 'rematch')    Game.rematch(game);
       broadcast();
       return;
     }
     if (msg.type === 'chat') {
-      // Relay back as-is for both sides to display
       const fromName = (game.players[1] && game.players[1].name) || '對手';
       $logChat(fromName, msg.text);
       return;
     }
   }
 
-  // ----- Guest receives -----
   function guestOnMsg(msg) {
-    if (msg.type === 'state') {
-      viewState = msg.state;
-      render();
-      return;
-    }
+    if (msg.type === 'state') { viewState = msg.state; render(); return; }
     if (msg.type === 'host_announce') {
-      // Host is alive — re-send hello immediately if we haven't got state yet
       if (!viewState) Net.send({ type: 'guest_hello', name: myName });
       return;
     }
-    if (msg.type === 'chat') {
-      $logChat(msg.fromName || '對手', msg.text);
-    }
+    if (msg.type === 'chat') $logChat(msg.fromName || '對手', msg.text);
   }
 
-  // ----- Host broadcasts state -----
   function broadcast() {
-    // host's own view
     viewState = Game.publicView(game, 0);
     render();
-    // guest's view
     const guestView = Game.publicView(game, 1);
     const payload = JSON.stringify(guestView);
     if (payload !== lastBroadcast) {
@@ -127,15 +140,15 @@
     }
   }
 
-  // ----- Send action (guest) or apply locally (host) -----
   function action(kind, extra = {}) {
     if (isHost) {
-      // apply locally as player 0
       if (kind === 'submit_deck') Game.submitDeck(game, 0, extra.deck);
       else if (kind === 'play_card')  Game.playCard(game, 0, extra.cardId, extra.choice || {});
       else if (kind === 'react')      Game.reactStone(game, 0, extra.cardId);
       else if (kind === 'pass_react') Game.passReaction(game, 0);
       else if (kind === 'end_turn')   Game.endTurn(game, 0);
+      else if (kind === 'activate_frozen') Game.activateFrozen(game, 0, extra.cardId, extra.choice||{});
+      else if (kind === 'respond_choice') Game.respondChoice(game, 0, extra.selection || []);
       else if (kind === 'rematch')    Game.rematch(game);
       broadcast();
     } else {
@@ -148,11 +161,8 @@
     $('logList').appendChild(d); $('logList').scrollTop = $('logList').scrollHeight;
   }
 
-  // ============ Lobby UI ============
-  $('btnCreate').onclick = () => {
-    myName = $('lobbyName').value.trim() || 'P1';
-    hostStart();
-  };
+  // ============ Lobby ============
+  $('btnCreate').onclick = () => { myName = $('lobbyName').value.trim() || 'P1'; hostStart(); };
   $('btnJoin').onclick = () => {
     myName = $('lobbyName').value.trim() || 'P2';
     const code = ($('lobbyRoom').value || '').trim();
@@ -238,7 +248,6 @@
     if (viewState.phase === 'lobby') { showScreen('lobby'); return; }
     if (viewState.phase === 'deck-select') {
       showScreen('deckSelect');
-      const me  = viewState.players[myIdx];
       const opp = viewState.players[1 - myIdx];
       $('opponentReady').textContent = opp ? (opp.ready ? '對手已選好牌！' : '等待對手選牌…') : '等待對手加入… 房間代碼：' + viewState.roomId;
       renderPool();
@@ -256,38 +265,110 @@
   function showScreen(id) { ['lobby','deckSelect','game'].forEach(s => $(s).classList.toggle('hidden', s !== id)); }
 
   function renderGame() {
-    const me  = viewState.players[myIdx]; const opp = viewState.players[1 - myIdx];
+    const me  = viewState.players[myIdx];
+    const opp = viewState.players[1 - myIdx];
     $('meName').textContent  = me.name;
     $('oppName').textContent = opp.name;
-    $('meHp').textContent   = me.hp;  $('meVolt').textContent  = me.voltage;
-    $('meAtk').textContent  = me.atk; $('meDef').textContent   = me.def;
-    $('oppHp').textContent  = opp.hp; $('oppVolt').textContent = opp.voltage;
-    $('oppAtk').textContent = opp.atk;$('oppDef').textContent  = opp.def;
+    $('meHp').textContent  = me.hp;
+    // Voltage with cost budget hint
+    $('meVolt').textContent = `${me.voltage}` + (me.costSpent ? ` (剩${me.budget})` : '');
+    $('meAtk').textContent = me.atk; $('meDef').textContent = me.def;
+    $('oppHp').textContent  = opp.hp;
+    $('oppVolt').textContent = `${opp.voltage}` + (opp.costSpent ? ` (剩${opp.budget})` : '');
+    $('oppAtk').textContent = opp.atk;$('oppDef').textContent = opp.def;
     $('meFirst').style.display  = viewState.firstPlayer === myIdx ? '' : 'none';
     $('oppFirst').style.display = viewState.firstPlayer !== myIdx ? '' : 'none';
     $('dayNight').textContent = viewState.isNight ? '🌙 月' : '☀ 日';
     $('turnInfo').textContent = `回合 ${viewState.turnNumber}　${viewState.currentTurn === myIdx ? '★ 你的回合' : '對手回合'}`;
 
-    $('meStatus').innerHTML  = (me.poison ? '<span class="tag">中毒</span>' : '') + (me.cannotHeal ? '<span class="tag">刻印</span>' : '');
-    $('oppStatus').innerHTML = (opp.poison ? '<span class="tag">中毒</span>' : '') + (opp.cannotHeal ? '<span class="tag">刻印</span>' : '');
+    const attachTags = arr => (arr||[]).map(a => `<span class="tag attach-${a.kind}">${a.kind}</span>`).join('');
+    $('meStatus').innerHTML  = (me.poison ? '<span class="tag">中毒</span>' : '') + (me.cannotHeal ? '<span class="tag">刻印</span>' : '') + attachTags(me.attachments);
+    $('oppStatus').innerHTML = (opp.poison ? '<span class="tag">中毒</span>' : '') + (opp.cannotHeal ? '<span class="tag">刻印</span>' : '') + attachTags(opp.attachments);
 
-    const meHand = $('meHand'); meHand.innerHTML = '';
+    // ===== Hand =====
     const myTurn = viewState.currentTurn === myIdx && viewState.phase === 'playing' && !viewState.pending;
+    const meHand = $('meHand'); meHand.innerHTML = '';
+    // Breath cards row + sword cards row
+    const breathRow = document.createElement('div'); breathRow.className = 'breath-row';
+    (me.breath || []).forEach(cid => {
+      const c = window.CARD_BY_ID[cid];
+      const disabled = !myTurn || me.budget < (cid === 'BC.2' ? 1 : (typeof c.cost === 'number' ? c.cost : 0));
+      const el = renderCardEl(c, { disabled, onClick: () => tryPlayCard(cid) });
+      el.classList.add('breath-card');
+      breathRow.appendChild(el);
+    });
+    (me.breathUsed || []).forEach(cid => {
+      const c = window.CARD_BY_ID[cid];
+      const el = renderCardEl(c, { disabled: true });
+      el.classList.add('breath-card','used'); breathRow.appendChild(el);
+    });
+    meHand.appendChild(breathRow);
+    // Sword/aid/stone hand
+    const handRow = document.createElement('div'); handRow.className = 'hand-row';
     (me.hand || []).forEach(cid => {
       const c = window.CARD_BY_ID[cid];
-      const disabled = !myTurn || me.voltage < (typeof c.cost === 'number' ? c.cost : 0) || c.types.includes('stone');
-      meHand.appendChild(renderCardEl(c, { disabled, onClick: () => tryPlayCard(cid) }));
+      const cost = typeof c.cost === 'number' ? c.cost : 1;
+      const disabled = !myTurn || me.budget < cost;
+      const el = renderCardEl(c, { disabled, onClick: () => tryPlayCard(cid) });
+      if (c.types.includes('stone')) el.classList.add('stone-card');
+      handRow.appendChild(el);
     });
+    meHand.appendChild(handRow);
+
+    // ===== Opponent hand backs =====
     const oppHand = $('oppHand'); oppHand.innerHTML = '';
     for (let i = 0; i < opp.handCount; i++) {
-      const d = document.createElement('div'); d.className = 'back'; d.textContent = '🂠';
-      oppHand.appendChild(d);
+      const d = document.createElement('div'); d.className = 'back'; d.textContent = '🂠'; oppHand.appendChild(d);
     }
-    $('meUsed').innerHTML  = (me.used||[]).map(id => `<span class="chip">${window.CARD_BY_ID[id].namecn}</span>`).join('') + (me.discard||[]).map(id => `<span class="chip" style="opacity:.5">⌫${window.CARD_BY_ID[id].namecn}</span>`).join('');
-    $('oppUsed').innerHTML = (opp.used||[]).map(id => `<span class="chip">${window.CARD_BY_ID[id].namecn}</span>`).join('') + (opp.discard||[]).map(id => `<span class="chip" style="opacity:.5">⌫${window.CARD_BY_ID[id].namecn}</span>`).join('');
+
+    // ===== Set area (face-down stones) =====
+    // Mine: visible to me
+    const meSetCount = (me.setArea || []).length;
+    $('meUsed').innerHTML =
+      (me.setArea || []).map(id => `<span class="chip" style="background:#3a2566; color:#c8a8ff">⌂蓋置:${window.CARD_BY_ID[id].namecn}</span>`).join('') +
+      (me.used || []).map(id => `<span class="chip">${window.CARD_BY_ID[id].namecn}</span>`).join('') +
+      (me.discard || []).map(id => `<span class="chip" style="opacity:.5">⌫${window.CARD_BY_ID[id].namecn}</span>`).join('');
+    // Opp: only show count of face-down
+    const oppSetCount = opp.setCount || 0;
+    $('oppUsed').innerHTML =
+      (oppSetCount > 0 ? `<span class="chip" style="background:#3a2566; color:#c8a8ff">⌂蓋置×${oppSetCount}</span>` : '') +
+      (opp.used || []).map(id => `<span class="chip">${window.CARD_BY_ID[id].namecn}</span>`).join('') +
+      (opp.discard || []).map(id => `<span class="chip" style="opacity:.5">⌫${window.CARD_BY_ID[id].namecn}</span>`).join('');
+
+    // Subordinates strip (NT 配下) — rendered above used-area
+    const subChip = s => `<span class="sub-chip" title="${window.CARD_BY_ID[s.cardId]?.namecn||s.name}">🪄 ${s.name} (${s.atk}/${s.def})${s.coin?` 🟡${s.coin}`:''}</span>`;
+    const coinTotal = (n) => n > 0 ? `<span class="coin-chip">🟡 COIN ${n}</span>` : '';
+    const meSubsHtml = coinTotal(me.coinTotal || 0) + (me.subordinates || []).map(subChip).join('');
+    const oppSubsHtml = coinTotal(opp.coinTotal || 0) + (opp.subordinates || []).map(subChip).join('');
+    // Frozen area (clickable for own, count-only for opp)
+    const myTurnNow = viewState.currentTurn === myIdx && viewState.phase === 'playing' && !viewState.pending;
+    const myFrozen = (me.frozen || []).map(id => {
+      const c = window.CARD_BY_ID[id];
+      const clickable = myTurnNow;
+      return `<span class="frozen-chip" data-cid="${id}" style="${clickable?'cursor:pointer':''}" title="${c?.namecn}：${c?.descsp||''}">❄ ${c?.namecn||id} (免費啟動)</span>`;
+    }).join('');
+    const oppFrozenCount = opp.frozenCount || 0;
+    const oppFrozen = oppFrozenCount > 0 ? `<span class="frozen-chip">❄×${oppFrozenCount}</span>` : '';
+    $('meUsed').innerHTML  = meSubsHtml + myFrozen + $('meUsed').innerHTML;
+    $('oppUsed').innerHTML = oppSubsHtml + oppFrozen + $('oppUsed').innerHTML;
+    // Wire up frozen activation clicks
+    $('meUsed').querySelectorAll('.frozen-chip[data-cid]').forEach(el => {
+      el.onclick = () => {
+        const cid = el.dataset.cid;
+        const c = window.CARD_BY_ID[cid];
+        // Cards with choices (No.71 結果之柔和音) need pick first
+        if (cid === 'No.71') {
+          askChoice(c.namecn, [['atk','狂奔之杯：攻+1'],['voltage','覺醒之蜜：魔力+1']],
+            (val) => action('activate_frozen', { cardId: cid, choice: { choice: val } }));
+        } else {
+          action('activate_frozen', { cardId: cid, choice: {} });
+        }
+      };
+    });
 
     $('btnEndTurn').disabled = !myTurn;
 
+    // ===== Pending attack / reaction =====
     if (viewState.pending) {
       $('pendingPanel').classList.remove('hidden');
       const p = viewState.pending; const c = window.CARD_BY_ID[p.cardId];
@@ -295,11 +376,11 @@
       $('pendingText').innerHTML = `<b>${ame}</b> 使用「${c.namecn}」 → 預計 ${p.baseDamage} 點${p.kind === 'magic' ? '魔法' : '物理'}傷害` + (p.reactable ? '' : '（無法反應）');
       const ra = $('reactArea'); ra.innerHTML = '';
       if (p.defenderIdx === myIdx && p.reactable) {
-        const stones = (me.hand||[]).filter(id => window.CARD_BY_ID[id].types.includes('stone') && me.voltage >= (window.CARD_BY_ID[id].cost || 1));
-        stones.forEach(id => {
+        // Reaction candidates come from MY setArea now (face-down stones)
+        (me.setArea || []).forEach(id => {
           const cd = window.CARD_BY_ID[id];
           const b = document.createElement('button');
-          b.textContent = `反應：${cd.namecn} (${cd.cost})`;
+          b.textContent = `反應：${cd.namecn}`;
           b.onclick = () => action('react', { cardId: id });
           ra.appendChild(b);
         });
@@ -314,6 +395,7 @@
       }
     } else $('pendingPanel').classList.add('hidden');
 
+    // ===== Log =====
     const ll = $('logList'); ll.innerHTML = '';
     viewState.log.forEach(l => { const d = document.createElement('div'); d.textContent = l; ll.appendChild(d); });
     ll.scrollTop = ll.scrollHeight;
@@ -322,9 +404,24 @@
   function tryPlayCard(cid) {
     const c = window.CARD_BY_ID[cid];
     if (cid === 'BC.2') {
-      const x = parseInt(prompt('支付幾點COST加防禦？', '1') || '0');
+      const me = viewState.players[myIdx];
+      const max = Math.max(1, me.budget);
+      const x = parseInt(prompt(`支付幾點COST加防禦？(本回合剩 ${me.budget} 可用)`, '1') || '0');
       if (!x) return;
-      action('play_card', { cardId: cid, choice: { x } }); return;
+      action('play_card', { cardId: cid, choice: { x: Math.min(x, max) } }); return;
+    }
+    // 錬成 cards: ask whether to invoke renseion before sending action
+    const RENSEION = {
+      'No.41': '徵稅劍：錬成（額外 +1 cost，傷害 +1）',
+      'No.48': '暗鴉之白芨：錬成（附加[暗鴉]：下次物理攻擊 +1）',
+      'No.62': '灰之劍：錬成（棄置[加熱法]，本次傷害 +2）'
+    };
+    if (RENSEION[cid]) {
+      askChoice(c.namecn + ' — 是否發動錬成？', [
+        ['skip','不發動'],
+        ['use','發動錬成']
+      ], (val) => action('play_card', { cardId: cid, choice: { renseion: val === 'use' ? 'discard_heat' : null } }));
+      return;
     }
     if (c.types.includes('special')) {
       const opts = {
@@ -343,11 +440,64 @@
     $('choiceTitle').textContent = title;
     const co = $('choiceOptions'); co.innerHTML = '';
     opts.forEach(([val, label]) => {
-      const b = document.createElement('button');
-      b.textContent = label;
+      const b = document.createElement('button'); b.textContent = label;
       b.onclick = () => { m.classList.add('hidden'); cb(val); };
       co.appendChild(b);
     });
+  }
+
+
+  let _choiceSelection = new Set();
+  function showChoiceModal(pc) {
+    const m = $('choiceModal'); m.classList.remove('hidden');
+    $('choiceTitle').textContent = pc.prompt + ` (選 ${pc.count})`;
+    const co = $('choiceOptions'); co.innerHTML = '';
+    _choiceSelection = new Set();
+    const RENSEION_LABELS = { skip: '不錬成', no_react: '錬成 1 cost：本攻擊無法反應', no_def: '錬成 5 cost：本攻擊無視防禦', yes: '是', no: '否' };
+    pc.options.forEach(id => {
+      const c = window.CARD_BY_ID[id];
+      const b = document.createElement('button');
+      if (id && id.startsWith && id.startsWith('TOKEN:')) b.textContent = `(設置區 token)`; else if (c) b.textContent = `${c.namecn} (cost ${c.cost})`;
+      else b.textContent = RENSEION_LABELS[id] || id;
+      b.dataset.id = id;
+      b.onclick = () => {
+        if (_choiceSelection.has(id)) { _choiceSelection.delete(id); b.style.background=''; }
+        else {
+          if (_choiceSelection.size >= pc.count) {
+            // For count=1, replace; for count>1, deny
+            if (pc.count === 1) {
+              _choiceSelection.clear();
+              co.querySelectorAll('button').forEach(x => x.style.background='');
+            } else return;
+          }
+          _choiceSelection.add(id); b.style.background='var(--accent)';
+          if (pc.count === 1) { confirmBtn.click(); }
+        }
+      };
+      co.appendChild(b);
+    });
+    // Add confirm button (allows submitting empty selection for cards like 壓壞劍)
+    const confirmBtn = document.createElement('button');
+    confirmBtn.textContent = pc.action === 'mulligan_double_else_quad' ?
+      `送出 (${_choiceSelection.size} / 2)` : '確認';
+    confirmBtn.style.fontWeight = 'bold'; confirmBtn.style.background = '#4a8';
+    confirmBtn.onclick = () => {
+      m.classList.add('hidden');
+      action('respond_choice', { selection: [..._choiceSelection] });
+      _choiceSelection.clear();
+    };
+    co.appendChild(confirmBtn);
+    // For "send empty = quad damage" cards, add explicit skip
+    if (pc.action === 'mulligan_double_else_quad') {
+      const skipBtn = document.createElement('button');
+      skipBtn.textContent = '不棄置（傷害×4）'; skipBtn.style.background = '#c46';
+      skipBtn.onclick = () => {
+        m.classList.add('hidden');
+        action('respond_choice', { selection: [] });
+        _choiceSelection.clear();
+      };
+      co.appendChild(skipBtn);
+    }
   }
 
   $('btnEndTurn').onclick = () => action('end_turn');
@@ -360,6 +510,15 @@
     $('chatInput').value = '';
   };
   $('chatInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnChat').click(); });
+
+  $('btnCopyCode').onclick = () => copyToClipboard(roomCode);
+  $('btnCopyUrl').onclick  = () => copyToClipboard(inviteUrl(roomCode));
+
+  try {
+    const url = new URL(location.href);
+    const r = url.searchParams.get('room');
+    if (r) { $('lobbyRoom').value = r.toUpperCase(); $('lobbyName').focus(); }
+  } catch {}
 
   renderPool();
 })();

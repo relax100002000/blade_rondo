@@ -29,6 +29,15 @@
         ⚠ 此 broker 為公開測試用，不建議傳送敏感資訊。
       </p>
     </div>
+      <div id="lobbyInfo" class="lobby-info hidden">
+        <div class="row"><span>房號：</span><b id="liRoom">----</b>
+          <button id="btnCopyCode">複製房號</button>
+        </div>
+        <div class="row"><span>邀請連結：</span><code id="liUrl"></code>
+          <button id="btnCopyUrl">複製連結</button>
+        </div>
+        <p class="hint" id="liStatus">等待對手加入…</p>
+      </div>
   </section>
 
   <section id="deckSelect" class="screen hidden">
@@ -131,5 +140,6 @@
   <script src="game.js"></script>
   <script src="net.js"></script>
   <script src="client.js"></script>
+  <div id="toast" class="toast hidden"></div>
 </body>
 </html>
