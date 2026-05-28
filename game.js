@@ -223,7 +223,7 @@ window.Game = (() => {
       used: [],           // sword cards face-up in play area this turn
       setArea: [],        // face-down response cards (carry across turns)
       discard: [],        // L cards permanently used
-      hp: 8, voltage: 0, atkBase: 0, defBase: 0,
+      hp: 15, voltage: 0, atkBase: 0, defBase: 0,  // 初始 HP 15（規則書 P.4：ライフストーン置於 15）
       atkBuff: 0, defBuff: 0,
       costSpent: 0,       // total cost spent THIS turn (must be ≤ voltage)
       nextDmgReduce: 0,   // 燐火-style buffered reduction
@@ -332,7 +332,7 @@ window.Game = (() => {
       p.hand = [...p.deck];
       p.breath = [BC.HEAT, BC.GUARD];
       p.breathUsed = []; p.used = []; p.setArea = []; p.discard = [];
-      p.hp = 8; p.voltage = 0; p.atkBase = 0; p.defBase = 0;
+      p.hp = 15; p.voltage = 0; p.atkBase = 0; p.defBase = 0;
       p.atkBuff = 0; p.defBuff = 0; p.costSpent = 0;
       p.poison = false; p.cannotHeal = false;
       p.nextDmgReduce = 0; p.magicDmgBonus = 0;
