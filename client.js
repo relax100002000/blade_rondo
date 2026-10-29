@@ -9,7 +9,7 @@
   let myName = 'P';
   let isHost = false;
   let roomCode = '';
-  let deckPick = new Set();
+  let deckPick = [];   // 同名卡最多 2 張（規則書「好きな剣で戦いたいなら」）
   let activeFilter = 'all';
   let lastBroadcast = '';
 
@@ -181,32 +181,37 @@
       const grid = document.createElement('div'); grid.className = 'card-grid';
       for (const c of pack.list) {
         if (activeFilter !== 'all' && !c.types.includes(activeFilter)) continue;
-        grid.appendChild(renderCardEl(c, { selected: deckPick.has(c.id), onClick: () => toggleDeckPick(c.id) }));
+        const cnt = deckPick.filter(x => x === c.id).length;
+        const el = renderCardEl(c, { selected: cnt > 0, onClick: () => toggleDeckPick(c.id) });
+        if (cnt > 1) { const b = document.createElement('span'); b.className = 'restrict'; b.style.left = '4px'; b.style.right = 'auto'; b.textContent = '×2'; el.appendChild(b); }
+        grid.appendChild(el);
       }
       sec.appendChild(grid); pool.appendChild(sec);
     }
-    $('selCount').textContent = deckPick.size;
+    $('selCount').textContent = deckPick.length;
     const sel = $('selectedList'); sel.innerHTML = '';
-    for (const id of deckPick) {
+    deckPick.forEach((id, k) => {
       const c = window.CARD_BY_ID[id];
       const d = document.createElement('div'); d.className = 'chip-sel';
       d.innerHTML = `<button data-id="${id}" class="rm" style="margin-right:4px">×</button>${c.namecn} <small style="color:#888">(${c.cost})</small>`;
-      d.querySelector('.rm').onclick = () => toggleDeckPick(id);
+      d.querySelector('.rm').onclick = () => { deckPick.splice(k, 1); renderPool(); };
       sel.appendChild(d);
-    }
-    $('btnSubmitDeck').disabled = deckPick.size !== 7;
+    });
+    $('btnSubmitDeck').disabled = deckPick.length !== 7;
   }
   function toggleDeckPick(id) {
-    if (deckPick.has(id)) deckPick.delete(id);
-    else { if (deckPick.size >= 7) return alert('最多 7 張'); deckPick.add(id); }
+    // 點一下加入；已有 2 張時再點則全部移除
+    const cnt = deckPick.filter(x => x === id).length;
+    if (cnt >= 2) deckPick = deckPick.filter(x => x !== id);
+    else { if (deckPick.length >= 7) return alert('最多 7 張'); deckPick.push(id); }
     renderPool();
   }
   $('btnSubmitDeck').onclick = () => action('submit_deck', { deck: [...deckPick] });
   $('btnRandomDeck').onclick = () => {
-    deckPick = new Set();
+    deckPick = [];
     const pool = [...window.ALL_CARDS];
     for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random()*(i+1)); [pool[i],pool[j]] = [pool[j],pool[i]]; }
-    pool.slice(0, 7).forEach(c => deckPick.add(c.id));
+    pool.slice(0, 7).forEach(c => deckPick.push(c.id));
     renderPool();
   };
   document.querySelectorAll('.ftype').forEach(b => b.onclick = () => {
@@ -282,8 +287,8 @@
     $('turnInfo').textContent = `回合 ${viewState.turnNumber}　${viewState.currentTurn === myIdx ? '★ 你的回合' : '對手回合'}`;
 
     const attachTags = arr => (arr||[]).map(a => `<span class="tag attach-${a.kind}">${a.kind}</span>`).join('');
-    $('meStatus').innerHTML  = (me.poison ? '<span class="tag">中毒</span>' : '') + (me.cannotHeal ? '<span class="tag">刻印</span>' : '') + attachTags(me.attachments);
-    $('oppStatus').innerHTML = (opp.poison ? '<span class="tag">中毒</span>' : '') + (opp.cannotHeal ? '<span class="tag">刻印</span>' : '') + attachTags(opp.attachments);
+    $('meStatus').innerHTML  = (me.poison ? `<span class="tag">中毒${me.poisonCount > 1 ? '×' + me.poisonCount : ''}</span>` : '') + (me.cannotHeal ? '<span class="tag">刻印</span>' : '') + attachTags(me.attachments);
+    $('oppStatus').innerHTML = (opp.poison ? `<span class="tag">中毒${opp.poisonCount > 1 ? '×' + opp.poisonCount : ''}</span>` : '') + (opp.cannotHeal ? '<span class="tag">刻印</span>' : '') + attachTags(opp.attachments);
 
     // ===== Hand =====
     const myTurn = viewState.currentTurn === myIdx && viewState.phase === 'playing' && !viewState.pending;
@@ -292,7 +297,7 @@
     const breathRow = document.createElement('div'); breathRow.className = 'breath-row';
     (me.breath || []).forEach(cid => {
       const c = window.CARD_BY_ID[cid];
-      const disabled = !myTurn || me.budget < (cid === 'BC.2' ? 1 : (typeof c.cost === 'number' ? c.cost : 0));
+      const disabled = !myTurn || me.budget < (cid === 'BC.2' ? 0 : (typeof c.cost === 'number' ? c.cost : 0));
       const el = renderCardEl(c, { disabled, onClick: () => tryPlayCard(cid) });
       el.classList.add('breath-card');
       breathRow.appendChild(el);
@@ -307,7 +312,9 @@
     const handRow = document.createElement('div'); handRow.className = 'hand-row';
     (me.hand || []).forEach(cid => {
       const c = window.CARD_BY_ID[cid];
-      const cost = typeof c.cost === 'number' ? c.cost : 1;
+      let cost = c.types.includes('stone') ? 1 : (typeof c.cost === 'number' ? c.cost : 1);
+      if (c.types.includes('magic')) cost = Math.max(0, cost - (me.magicCostDiscount || 0));
+      if (cid === 'No.32') cost = Math.max(0, cost - Math.max(0, ...(me.subordinates || []).filter(x => x.isDoll).map(x => window.CARD_BY_ID[x.cardId].cost)));
       const disabled = !myTurn || me.budget < cost;
       const el = renderCardEl(c, { disabled, onClick: () => tryPlayCard(cid) });
       if (c.types.includes('stone')) el.classList.add('stone-card');
@@ -327,12 +334,14 @@
     $('meUsed').innerHTML =
       (me.setArea || []).map(id => `<span class="chip" style="background:#3a2566; color:#c8a8ff">⌂蓋置:${window.CARD_BY_ID[id].namecn}</span>`).join('') +
       (me.used || []).map(id => `<span class="chip">${window.CARD_BY_ID[id].namecn}</span>`).join('') +
+      (me.usedResponses || []).map(id => `<span class="chip" style="background:#3a2566">↺${window.CARD_BY_ID[id].namecn}</span>`).join('') +
       (me.discard || []).map(id => `<span class="chip" style="opacity:.5">⌫${window.CARD_BY_ID[id].namecn}</span>`).join('');
     // Opp: only show count of face-down
     const oppSetCount = opp.setCount || 0;
     $('oppUsed').innerHTML =
       (oppSetCount > 0 ? `<span class="chip" style="background:#3a2566; color:#c8a8ff">⌂蓋置×${oppSetCount}</span>` : '') +
       (opp.used || []).map(id => `<span class="chip">${window.CARD_BY_ID[id].namecn}</span>`).join('') +
+      (opp.usedResponses || []).map(id => `<span class="chip" style="background:#3a2566">↺${window.CARD_BY_ID[id].namecn}</span>`).join('') +
       (opp.discard || []).map(id => `<span class="chip" style="opacity:.5">⌫${window.CARD_BY_ID[id].namecn}</span>`).join('');
 
     // Subordinates strip (NT 配下) — rendered above used-area
@@ -344,7 +353,7 @@
     const myTurnNow = viewState.currentTurn === myIdx && viewState.phase === 'playing' && !viewState.pending;
     const myFrozen = (me.frozen || []).map(id => {
       const c = window.CARD_BY_ID[id];
-      const clickable = myTurnNow;
+      const clickable = myTurnNow && !(me.frozenLocked || []).includes(id);
       return `<span class="frozen-chip" data-cid="${id}" style="${clickable?'cursor:pointer':''}" title="${c?.namecn}：${c?.descsp||''}">❄ ${c?.namecn||id} (免費啟動)</span>`;
     }).join('');
     const oppFrozenCount = opp.frozenCount || 0;
@@ -358,7 +367,7 @@
         const c = window.CARD_BY_ID[cid];
         // Cards with choices (No.71 結果之柔和音) need pick first
         if (cid === 'No.71') {
-          askChoice(c.namecn, [['atk','狂奔之杯：攻+1'],['voltage','覺醒之蜜：魔力+1']],
+          askChoice(c.namecn, [['atk','狂奔之杯：攻+1'],['voltage','覺醒之蜜：本回合可多用 1 cost']],
             (val) => action('activate_frozen', { cardId: cid, choice: { choice: val } }));
         } else {
           action('activate_frozen', { cardId: cid, choice: {} });
@@ -373,7 +382,9 @@
       $('pendingPanel').classList.remove('hidden');
       const p = viewState.pending; const c = window.CARD_BY_ID[p.cardId];
       const ame = p.attackerIdx === myIdx ? '你' : '對手';
-      $('pendingText').innerHTML = `<b>${ame}</b> 使用「${c.namecn}」 → 預計 ${p.baseDamage} 點${p.kind === 'magic' ? '魔法' : '物理'}傷害` + (p.reactable ? '' : '（無法反應）');
+      $('pendingText').innerHTML = p.kind === 'aid'
+        ? `<b>${ame}</b> 的◆補助行動「${c.namecn}」（可用◆補助反應卡回應）`
+        : `<b>${ame}</b> 使用「${c.namecn}」 → 預計 ${p.baseDamage} 點${p.kind === 'magic' ? '魔法' : '物理'}傷害` + (p.reactable ? '' : '（無法反應）');
       const ra = $('reactArea'); ra.innerHTML = '';
       if (p.defenderIdx === myIdx && p.reactable) {
         // Reaction candidates come from MY setArea now (face-down stones)
@@ -405,16 +416,42 @@
     const c = window.CARD_BY_ID[cid];
     if (cid === 'BC.2') {
       const me = viewState.players[myIdx];
-      const max = Math.max(1, me.budget);
-      const x = parseInt(prompt(`支付幾點COST加防禦？(本回合剩 ${me.budget} 可用)`, '1') || '0');
-      if (!x) return;
+      const max = Math.max(0, me.budget);
+      const raw = prompt(`加護法：支付 X 點 COST，你的防禦力變為 X（本回合剩 ${me.budget} 可用）`, String(Math.min(max, Math.max(1, me.def))));
+      if (raw === null) return;
+      const x = parseInt(raw, 10);
+      if (!Number.isInteger(x) || x < 0) return;
       action('play_card', { cardId: cid, choice: { x: Math.min(x, max) } }); return;
+    }
+    // ディスペルワイス：錬成 X cost（追加可棄置範圍 cost ≤ 2+X）
+    if (cid === 'No.49') {
+      const me = viewState.players[myIdx];
+      const maxX = Math.max(0, me.budget - (c.cost - (me.magicCostDiscount || 0)));
+      let X = 0;
+      if (maxX > 0) {
+        const raw = prompt(`${c.namecn} 錬成：額外支付 X cost（0～${maxX}），追加可棄置對手設置區 cost ≤ 2+X 的卡`, '0');
+        if (raw === null) return;
+        X = Math.max(0, Math.min(maxX, parseInt(raw, 10) || 0));
+      }
+      action('play_card', { cardId: cid, choice: { renseionX: X } }); return;
+    }
+    // 開花するスケルツォ：錬成（付費前）可把 1 個人偶配下收回手牌，cost 減該人偶 cost
+    if (cid === 'No.32') {
+      const me = viewState.players[myIdx];
+      const dolls = (me.subordinates || []).filter(x => x.isDoll);
+      if (dolls.length) {
+        askChoice(c.namecn + ' — 錬成：收回哪個人偶？', [['', '不錬成'], ...dolls.map(x => [x.cardId, `${x.name}（cost -${window.CARD_BY_ID[x.cardId].cost}）`])],
+          (val) => action('play_card', { cardId: cid, choice: val ? { renseionDoll: val } : {} }));
+        return;
+      }
     }
     // 錬成 cards: ask whether to invoke renseion before sending action
     const RENSEION = {
-      'No.41': '徵稅劍：錬成（額外 +1 cost，傷害 +1）',
+      'No.41': '徵稅劍：錬成（額外支付 1 cost；造成傷害後本卡成為設置區的金貨 1）',
       'No.48': '暗鴉之白芨：錬成（附加[暗鴉]：下次物理攻擊 +1）',
-      'No.62': '灰之劍：錬成（棄置[加熱法]，本次傷害 +2）'
+      'No.62': '灰之劍：錬成（棄置[加熱法]，本次傷害 +2）',
+      'No.72': '凍結之嘯鳴：錬成（支付 9 cost，之後進行 2 次攻擊力 15 的物理攻擊）',
+      'No.83': '正中側腹之椿：錬成（本卡變為 [L]；造成傷害時對手棄 1 張手牌）'
     };
     if (RENSEION[cid]) {
       askChoice(c.namecn + ' — 是否發動錬成？', [
@@ -427,7 +464,7 @@
       const opts = {
         'No.51': [['heal','慈雨：獲5生命'],['atk','怒濤：攻+1'],['def','清澄：防+1'],['voltage','渦動：回合末魔力+1']],
         'No.70': [['attack','物質：物理攻擊'],['magic','法術：魔法攻擊(1)']],
-        'No.71': [['atk','狂奔之杯：攻+1'],['voltage','覺醒之蜜：魔力+1']],
+        'No.71': [['atk','狂奔之杯：攻+1'],['voltage','覺醒之蜜：本回合可多用 1 cost']],
         'No.91': [['attack','赤之物理攻擊'],['magic','青之魔法(2)'],['heal','綠之獲2生命']],
         'No.92': [['attack','萬節劍：攻擊力x3物理'],['magic','滅絕論：魔法(9)']],
       }[cid];
@@ -453,11 +490,13 @@
     $('choiceTitle').textContent = pc.prompt + ` (選 ${pc.count})`;
     const co = $('choiceOptions'); co.innerHTML = '';
     _choiceSelection = new Set();
-    const RENSEION_LABELS = { skip: '不錬成', no_react: '錬成 1 cost：本攻擊無法反應', no_def: '錬成 5 cost：本攻擊無視防禦', yes: '是', no: '否' };
+    const RENSEION_LABELS = { skip: '不錬成', no_react: '錬成 1 cost：本攻擊無法反應', no_def: '錬成 5 cost：本攻擊無視防禦', both: '錬成 6 cost：無法被反應＋無視防禦', '+1': '傷害 +1', '-1': '傷害 -1', none: '不使用', yes: '是', no: '否', x0: '不錬成', x3: '錬成 3 cost（攻擊力 +3）', x6: '錬成 6 cost（攻擊力 +6）', x9: '錬成 9 cost（攻擊力 +9）', attack: '物理攻擊', magic: '魔法攻擊', self: '自己', opp: '對手' };
     pc.options.forEach(id => {
       const c = window.CARD_BY_ID[id];
       const b = document.createElement('button');
-      if (id && id.startsWith && id.startsWith('TOKEN:')) b.textContent = `(設置區 token)`; else if (c) b.textContent = `${c.namecn} (cost ${c.cost})`;
+      const zm = typeof id === 'string' && id.match(/^(SUB|FRZ|SET|TOK|ATT|H):(?:\d+:)?(.+)$/);
+      if (zm) { const zc = window.CARD_BY_ID[zm[2]]; b.textContent = zm[1] === 'SET' ? '蓋置中的反應卡' : `${{ SUB: '配下', FRZ: '凍結', TOK: '金貨', ATT: '付與', H: '手牌' }[zm[1]]}：${zc ? zc.namecn : zm[2]}`; }
+      else if (id && id.startsWith && id.startsWith('TOKEN:')) b.textContent = `(設置區 token)`; else if (c) b.textContent = `${c.namecn} (cost ${c.cost})`;
       else b.textContent = RENSEION_LABELS[id] || id;
       b.dataset.id = id;
       b.onclick = () => {
